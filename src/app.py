@@ -5,11 +5,20 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, Header
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
+from typing import Optional, List
+from pydantic import BaseModel
 import os
 from pathlib import Path
+
+class Activity(BaseModel):
+    name: str
+    description: str
+    schedule: str
+    max_participants: int
+    participants: List[str] = []
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
@@ -18,6 +27,11 @@ app = FastAPI(title="Mergington High School API",
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
+
+def check_authorization(role: str = Header(...)):
+    if role not in ['teacher', 'admin']:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    return role
 
 # In-memory activity database
 activities = {
@@ -130,3 +144,38 @@ def unregister_from_activity(activity_name: str, email: str):
     # Remove student
     activity["participants"].remove(email)
     return {"message": f"Unregistered {email} from {activity_name}"}
+
+
+@app.post("/activities/create")
+def create_activity(activity: Activity, role: str = Depends(check_authorization)):
+    """Create a new activity (teachers and admins only)"""
+    if activity.name in activities:
+        raise HTTPException(status_code=400, detail="Activity already exists")
+    
+    activities[activity.name] = activity.dict()
+    return {"message": f"Activity {activity.name} created successfully"}
+
+
+@app.put("/activities/{activity_name}")
+def update_activity(activity_name: str, activity: Activity, role: str = Depends(check_authorization)):
+    """Update an existing activity (teachers and admins only)"""
+    if activity_name not in activities:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    
+    # Preserve existing participants
+    existing_participants = activities[activity_name]["participants"]
+    activity_data = activity.dict()
+    activity_data["participants"] = existing_participants
+    
+    activities[activity_name] = activity_data
+    return {"message": f"Activity {activity_name} updated successfully"}
+
+
+@app.delete("/activities/{activity_name}")
+def delete_activity(activity_name: str, role: str = Depends(check_authorization)):
+    """Delete an activity (teachers and admins only)"""
+    if activity_name not in activities:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    
+    del activities[activity_name]
+    return {"message": f"Activity {activity_name} deleted successfully"}
